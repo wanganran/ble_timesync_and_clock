@@ -57,6 +57,7 @@
 #include "nrf_ble_gatt.h"
 #include "nrf_pwr_mgmt.h"
 #include "nrf_ble_scan.h"
+#include "nrf_gpio.h"
 
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
@@ -67,6 +68,23 @@
 #include "nrf_ppi.h"
 #include "nrf_timer.h"
 
+/**** PWM related ****/
+#define PWM_PIN NRF_GPIO_PIN_MAP(1, 7)
+#include "nrf_drv_pwm.h"
+static nrf_drv_pwm_t m_pwm0 = NRF_DRV_PWM_INSTANCE(0);
+nrf_pwm_values_individual_t seq_values[] = {{10, 0, 0, 0}};
+nrf_pwm_sequence_t const seq =
+{
+    .values.p_individual = seq_values,
+    .length          = NRF_PWM_VALUES_LENGTH(seq_values),
+    .repeats         = 0,
+    .end_delay       = 0
+};
+
+/**** end PWM related ****/
+
+#define START_PIN NRF_GPIO_PIN_MAP(1, 8)
+#define TIMESYNC_FREQ 50
 
 #define APP_BLE_CONN_CFG_TAG    1                                       /**< Tag that refers to the BLE stack configuration set with @ref sd_ble_cfg_set. The default tag is @ref BLE_CONN_CFG_TAG_DEFAULT. */
 #define APP_BLE_OBSERVER_PRIO   3                                       /**< BLE observer priority of the application. There is no need to modify this value. */
@@ -535,27 +553,25 @@ void bsp_event_handler(bsp_event_t event)
         case BSP_EVENT_KEY_2:
         case BSP_EVENT_KEY_3:
             {
-                static bool m_send_sync_pkt = false;
+                static bool m_start_clock = false;
 
-                if (m_send_sync_pkt)
+                if (m_start_clock)
                 {
-                    m_send_sync_pkt = false;
+                    m_start_clock = false;
 
                     bsp_board_leds_off();
 
-                    err_code = ts_tx_stop();
-                    APP_ERROR_CHECK(err_code);
+                    nrf_gpio_pin_clear(START_PIN);
 
-                    NRF_LOG_INFO("Stopping sync beacon transmission!\r\n");
+                    NRF_LOG_INFO("start");
                 }
                 else
                 {
-                    m_send_sync_pkt = true;
+                    m_start_clock = true;
 
                     bsp_board_leds_on();
 
-                    err_code = ts_tx_start(200);
-                    APP_ERROR_CHECK(err_code);
+                    nrf_gpio_pin_set(START_PIN);
 
                     NRF_LOG_INFO("Starting sync beacon transmission!\r\n");
                 }
@@ -738,8 +754,43 @@ static void sync_timer_init(void)
     NRF_LOG_INFO("Press Button 1 to start sending sync beacons\r\n");
 }
 
+void pwm_init(){
+  /** init PWM for 50kHz clock **/
+  // Start clock for accurate frequencies
+  NRF_CLOCK->TASKS_HFCLKSTART = 1; 
+  // Wait for clock to start
+  while(NRF_CLOCK->EVENTS_HFCLKSTARTED == 0);
+  nrf_drv_pwm_config_t const config0 =
+  {
+      .output_pins =
+      {
+          PWM_PIN, // channel 0
+          NRF_DRV_PWM_PIN_NOT_USED,             // channel 1
+          NRF_DRV_PWM_PIN_NOT_USED,             // channel 2
+          NRF_DRV_PWM_PIN_NOT_USED,             // channel 3
+      },
+      .irq_priority = APP_IRQ_PRIORITY_LOWEST,
+      .base_clock   = NRF_PWM_CLK_1MHz,
+      .count_mode   = NRF_PWM_MODE_UP,
+      .top_value    = 20,
+      .load_mode    = NRF_PWM_LOAD_INDIVIDUAL,
+      .step_mode    = NRF_PWM_STEP_AUTO
+  };
+
+  // Init PWM without error handler
+  APP_ERROR_CHECK(nrf_drv_pwm_init(&m_pwm0, &config0, NULL));
+
+  nrf_drv_pwm_simple_playback(&m_pwm0, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+  /** end **/
+}
+
+void pin_init(){
+    nrf_gpio_cfg_output(START_PIN);
+}
+
 int main(void)
 {
+    uint32_t err_code;
     // Initialize.
     log_init();
     timer_init();
@@ -753,6 +804,11 @@ int main(void)
     scan_init();
 
     sync_timer_init();
+    
+    pwm_init();
+
+    err_code = ts_tx_start(TIMESYNC_FREQ);
+    APP_ERROR_CHECK(err_code);
 
     // Start execution.
     printf("BLE UART central example started.\r\n");
