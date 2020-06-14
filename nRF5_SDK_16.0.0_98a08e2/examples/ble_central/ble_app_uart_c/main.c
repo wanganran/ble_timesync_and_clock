@@ -71,6 +71,7 @@
 /**** PWM related ****/
 #define PWM_PIN NRF_GPIO_PIN_MAP(1, 7)
 #include "nrf_drv_pwm.h"
+#include "nrf_drv_clock.h"
 static nrf_drv_pwm_t m_pwm0 = NRF_DRV_PWM_INSTANCE(0);
 nrf_pwm_values_individual_t seq_values[] = {{10, 0, 0, 0}};
 nrf_pwm_sequence_t const seq =
@@ -81,9 +82,46 @@ nrf_pwm_sequence_t const seq =
     .end_delay       = 0
 };
 
+void pwm_init(){
+  APP_ERROR_CHECK(nrf_drv_clock_init());
+  nrf_drv_clock_lfclk_request(NULL);
+
+  // init PWM for 50kHz clock
+  // Start clock for accurate frequencies
+  NRF_CLOCK->TASKS_HFCLKSTART = 1; 
+  // Wait for clock to start
+  while(NRF_CLOCK->EVENTS_HFCLKSTARTED == 0);
+  nrf_drv_pwm_config_t const config0 =
+  {
+      .output_pins =
+      {
+          PWM_PIN, // channel 0
+          NRF_DRV_PWM_PIN_NOT_USED,             // channel 1
+          NRF_DRV_PWM_PIN_NOT_USED,             // channel 2
+          NRF_DRV_PWM_PIN_NOT_USED,             // channel 3
+      },
+      .irq_priority = APP_IRQ_PRIORITY_LOWEST,
+      .base_clock   = NRF_PWM_CLK_1MHz,
+      .count_mode   = NRF_PWM_MODE_UP,
+      .top_value    = 20,
+      .load_mode    = NRF_PWM_LOAD_INDIVIDUAL,
+      .step_mode    = NRF_PWM_STEP_AUTO
+  };
+
+  // Init PWM without error handler
+  APP_ERROR_CHECK(nrf_drv_pwm_init(&m_pwm0, &config0, NULL));
+
+  nrf_drv_pwm_simple_playback(&m_pwm0, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
+  // end
+}
+
+
 /**** end PWM related ****/
 
 #define START_PIN NRF_GPIO_PIN_MAP(1, 8)
+#define EN_IND_PIN 3
+#define TS_IND_PIN 2
+
 #define TIMESYNC_FREQ 50
 
 #define APP_BLE_CONN_CFG_TAG    1                                       /**< Tag that refers to the BLE stack configuration set with @ref sd_ble_cfg_set. The default tag is @ref BLE_CONN_CFG_TAG_DEFAULT. */
@@ -423,6 +461,10 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             // start discovery of services. The NUS Client waits for a discovery result
             err_code = ble_db_discovery_start(&m_db_disc, p_ble_evt->evt.gap_evt.conn_handle);
             APP_ERROR_CHECK(err_code);
+
+            // indicator
+            bsp_board_led_on(TS_IND_PIN);
+
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
@@ -430,6 +472,9 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_LOG_INFO("Disconnected. conn_handle: 0x%x, reason: 0x%x",
                          p_gap_evt->conn_handle,
                          p_gap_evt->params.disconnected.reason);
+            
+            // indicator
+            bsp_board_led_off(TS_IND_PIN);
             break;
 
         case BLE_GAP_EVT_TIMEOUT:
@@ -559,27 +604,27 @@ void bsp_event_handler(bsp_event_t event)
                 {
                     m_start_clock = false;
 
-                    bsp_board_leds_off();
+                    bsp_board_led_off(EN_IND_PIN);
 
                     nrf_gpio_pin_clear(START_PIN);
 
-                    NRF_LOG_INFO("start");
+                    NRF_LOG_INFO("en stop\n");
                 }
                 else
                 {
                     m_start_clock = true;
 
-                    bsp_board_leds_on();
+                    bsp_board_led_on(EN_IND_PIN);
 
                     nrf_gpio_pin_set(START_PIN);
 
-                    NRF_LOG_INFO("Starting sync beacon transmission!\r\n");
+                    NRF_LOG_INFO("en start\n");
                 }
             }
             break;
 
         case BSP_EVENT_SLEEP:
-            nrf_pwr_mgmt_shutdown(NRF_PWR_MGMT_SHUTDOWN_GOTO_SYSOFF);
+            // nrf_pwr_mgmt_shutdown(NRF_PWR_MGMT_SHUTDOWN_GOTO_SYSOFF);
             break;
 
         case BSP_EVENT_DISCONNECT:
@@ -754,35 +799,6 @@ static void sync_timer_init(void)
     NRF_LOG_INFO("Press Button 1 to start sending sync beacons\r\n");
 }
 
-void pwm_init(){
-  /** init PWM for 50kHz clock **/
-  // Start clock for accurate frequencies
-  NRF_CLOCK->TASKS_HFCLKSTART = 1; 
-  // Wait for clock to start
-  while(NRF_CLOCK->EVENTS_HFCLKSTARTED == 0);
-  nrf_drv_pwm_config_t const config0 =
-  {
-      .output_pins =
-      {
-          PWM_PIN, // channel 0
-          NRF_DRV_PWM_PIN_NOT_USED,             // channel 1
-          NRF_DRV_PWM_PIN_NOT_USED,             // channel 2
-          NRF_DRV_PWM_PIN_NOT_USED,             // channel 3
-      },
-      .irq_priority = APP_IRQ_PRIORITY_LOWEST,
-      .base_clock   = NRF_PWM_CLK_1MHz,
-      .count_mode   = NRF_PWM_MODE_UP,
-      .top_value    = 20,
-      .load_mode    = NRF_PWM_LOAD_INDIVIDUAL,
-      .step_mode    = NRF_PWM_STEP_AUTO
-  };
-
-  // Init PWM without error handler
-  APP_ERROR_CHECK(nrf_drv_pwm_init(&m_pwm0, &config0, NULL));
-
-  nrf_drv_pwm_simple_playback(&m_pwm0, &seq, 1, NRF_DRV_PWM_FLAG_LOOP);
-  /** end **/
-}
 
 void pin_init(){
     nrf_gpio_cfg_output(START_PIN);
@@ -793,6 +809,7 @@ int main(void)
     uint32_t err_code;
     // Initialize.
     log_init();
+    pwm_init();
     timer_init();
     uart_init();
     buttons_leds_init();
@@ -804,8 +821,7 @@ int main(void)
     scan_init();
 
     sync_timer_init();
-    
-    pwm_init();
+    pin_init();
 
     err_code = ts_tx_start(TIMESYNC_FREQ);
     APP_ERROR_CHECK(err_code);

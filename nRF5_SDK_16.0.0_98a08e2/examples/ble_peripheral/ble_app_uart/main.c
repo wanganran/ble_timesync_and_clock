@@ -85,6 +85,8 @@
 #include "nrf_ppi.h"
 #include "nrf_timer.h"
 
+#define TS_IND_PIN 1
+
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
 #define DEVICE_NAME                     "Nordic_UART"                               /**< Name of device. Will be included in the advertising data. */
@@ -372,12 +374,18 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
             APP_ERROR_CHECK(err_code);
+
+            // indicator
+            bsp_board_led_on(TS_IND_PIN);
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
             NRF_LOG_INFO("Disconnected");
             // LED indication will be changed when advertising starts.
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
+
+            // indicator
+            bsp_board_led_off(TS_IND_PIN);
             break;
 
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
@@ -799,7 +807,7 @@ int main(void)
 
     // Start execution.
     printf("\r\nUART started.\r\n");
-    NRF_LOG_INFO("Debug logging for UART over RTT started.");
+    //NRF_LOG_INFO("Debug logging for UART over RTT started.");
     advertising_start();
 
     // Enter main loop.
