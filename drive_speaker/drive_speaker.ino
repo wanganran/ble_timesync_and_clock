@@ -54,8 +54,8 @@ void countend(){
 }
 void blink() {
   if(en>0){
-    int data1=wav[count1]/2;
-    int data2=wav[count2]/2;
+    int data1=wav[count1];
+    int data2=wav[count2];
     //Write the DACs
     dacc_set_channel_selection(DACC_INTERFACE, 0);       //select DAC channel 0
     dacc_write_conversion_data(DACC_INTERFACE, data1); //write on DAC
@@ -66,8 +66,8 @@ void blink() {
     count2=(count2+1)%wavlen;
   } else {
     dacc_set_channel_selection(DACC_INTERFACE, 0);       //select DAC channel 0
-    dacc_write_conversion_data(DACC_INTERFACE, 0); //write on DAC
+    dacc_write_conversion_data(DACC_INTERFACE, 2048); //write on DAC
     dacc_set_channel_selection(DACC_INTERFACE, 1);       //select DAC channel 1
-    dacc_write_conversion_data(DACC_INTERFACE, 0);//write on DAC
+    dacc_write_conversion_data(DACC_INTERFACE, 2048);//write on DAC
   }
 }
